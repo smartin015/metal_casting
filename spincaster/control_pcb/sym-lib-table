@@ -1,0 +1,4 @@
+(sym_lib_table
+  (lib (name "TTGO")(type "Legacy")(uri "${KIPRJMOD}/ttgo-tdisplay-kicad-master/ttgo_esp32.lib")(options "")(descr ""))
+  (lib (name "EEC")(type "Legacy")(uri "${KIPRJMOD}/buffer_lib/eec.lib")(options "")(descr ""))
+)

@@ -1,0 +1,4 @@
+(fp_lib_table
+  (lib (name "TTGO")(type "KiCad")(uri "${KIPRJMOD}/ttgo-tdisplay-kicad-master")(options "")(descr ""))
+  (lib (name "EEC")(type "KiCad")(uri "${KIPRJMOD}/buffer_lib/eec.pretty")(options "")(descr ""))
+)
