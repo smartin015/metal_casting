@@ -184,8 +184,6 @@ void showState(state_t s) {
   }
 }
 
-
-uint64_t spinStart = 0;
 state_t calcState(state_t cur) {
   switch (cur) {
     case STATE_INIT:
@@ -237,9 +235,6 @@ state_t calcState(state_t cur) {
         return STATE_LID_OPEN;
       } else if (button[BUTTON_SPIN].isPressed()) {
         buzzSpinStart = true;
-        if (!spinStart) {
-          spinStart = millis();
-        }
         return STATE_SPINNING;
       } else if (button[BUTTON_INDUCTION_OFF].isPressed()) {
         return STATE_ARMED;
@@ -250,11 +245,7 @@ state_t calcState(state_t cur) {
       }
       return cur; // Maintain current state
     case STATE_SPINNING:
-      if (!button[BUTTON_ARM].isPressed() || !button[BUTTON_SPIN].isPressed() || !button[BUTTON_LID].isPressed()) {
-        spinStart = 0;
-        return STATE_SPINDOWN;
-      }
-      return cur;
+      return cur; // Spindown is handled in motorLoop()
     case STATE_SPINDOWN:
       if (!button[BUTTON_LID].isPressed() && !button[BUTTON_ARM].isPressed()) {
         return STATE_DISARMED;
@@ -265,8 +256,13 @@ state_t calcState(state_t cur) {
   }
 }
 
+uint64_t stateStart = 0;
 void generalButtonHandler(Button2& b) {
-  state = calcState(state);
+  state_t next = calcState(state);
+  if (next != state) {
+    state = next;
+    stateStart = millis();
+  }
   if (b.isPressed() && b.getAttachPin() != BUTTON_PINS[BUTTON_LID] && b.getAttachPin() != BUTTON_PINS[BUTTON_SPIN]) {
     buzzButtonPress = true;
   }
@@ -332,7 +328,7 @@ void inductionLoop(uint64_t now, state_t state) {
       next = HIGH;
       break;
     case STATE_PULSING:
-      next = ((now / 100) % 10) < 8;
+      next = (((now-stateStart) / 1000) % 2) ? HIGH : LOW;
       break;
     default:
       next = LOW;
@@ -345,14 +341,14 @@ void inductionLoop(uint64_t now, state_t state) {
 }
 
 int curMot = 0;
-bool motorLoop(uint64_t now) {
+void motorLoop(uint64_t now) {
   auto next = 0;
   if (state == STATE_NUDGE) {
-    next = (((now / 10) % 100) == 0 ? 255 : 0);
-    //next = 128;
+    next = ((((now-stateStart) / 10) % 256) == 0 ? 255 : 0);
+    //next = 1;
   }
   if (state == STATE_SPINNING) {
-    if (now < spinStart + 5000) {
+    if (now < stateStart + 2000) {
       next = 255;
     } else {
       state = STATE_SPINDOWN;
