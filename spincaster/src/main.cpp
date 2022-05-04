@@ -24,6 +24,9 @@ TFT_eSPI tft = TFT_eSPI(135, 240); // Invoke custom library
 #define MOTOR_CHANNEL 1
 #define INDUCTION_PIN 33
 
+#define O2_RX 37
+#define O2_TX 38
+
 typedef enum {
   BUTTON_1,
   BUTTON_2,
@@ -272,6 +275,11 @@ void setup()
 {
     Serial.begin(115200);
     Serial.println("Start");
+
+    // Grove O2 sensor serial
+    Serial2.begin(9600, SERIAL_8N1, O2_RX, O2_TX);
+
+
     tft.init();
     tft.setRotation(3);
     if (TFT_BL > 0) { // TFT_BL has been set in the TFT_eSPI library in the User Setup file TTGO_T_Display.h
@@ -367,7 +375,61 @@ void motorLoop(uint64_t now) {
   }
 }
 
-int i = 0;
+#define O2_BEGIN 255
+#define O2_PACKET_LEN 9
+#define O2_CMD_READ 0x86
+uint8_t o2idx = O2_PACKET_LEN;
+uint8_t o2buf[16];
+struct o2_state_t {
+  uint16_t conc_raw;
+  float concentration;
+  bool valid = false;
+  uint16_t errors = 0;
+} o2_state;
+void sensorLoop() {
+  while (Serial2.available()) {
+    uint8_t c = Serial2.read();
+    if (o2idx >= O2_PACKET_LEN) {
+      o2idx = (c == O2_BEGIN) ? 0 : O2_PACKET_LEN;
+    }
+    char hbuf[3];
+    sprintf(hbuf, "%d %02x", o2idx, c);
+    Serial.println(hbuf);
+    o2buf[o2idx++] = c;
+    if (o2idx == O2_PACKET_LEN) {
+      // https://files.seeedstudio.com/wiki/Grove_Oxygen_Sensor_Pro/res/GGC2330-O2-1.0.pdf
+      // The default communication type is active upload and it sends gas concentration every other one
+      // second (the concentration is 16 hexadecimal)
+      // ex. FF [86 00 00 00 00 00 00 7A] （concentration value is 0）
+      // Gas concentration value = (gas concentration high byte *256 + gas concentration low byte) * resolution
+      if (o2buf[1] != O2_CMD_READ) {
+        Serial.print("Unsupported O2 command: ");
+        Serial.println(o2buf[1]);
+        continue;
+      }
+      o2_state.conc_raw = (o2buf[6] << 8) + o2buf[7];
+      
+      uint8_t checksum = 0;
+      for (uint8_t i = 1; i < 8; i++) {
+        checksum += o2buf[i];
+      }
+      checksum = (checksum ^ 0xFF)+1;
+      
+      char buf[64];
+      if (checksum != o2buf[8]) {
+        o2_state.errors++;
+        o2_state.valid = false;
+        sprintf(buf, "O2 CKFAIL want %02x got %02x (errs=%d)", o2buf[8], checksum, o2_state.errors);
+      } else {
+        o2_state.concentration = float(o2_state.conc_raw) * 0.1;
+        o2_state.valid = true;
+        sprintf(buf, "O2 %02f%", o2_state.concentration, o2_state.valid, o2_state.errors);
+      }
+      Serial.println(buf);
+    }
+  }
+}
+
 uint64_t last_update = 0;
 void loop()
 {
@@ -379,6 +441,7 @@ void loop()
       last_update = now;
       showState(state);
     }
+    sensorLoop();
     buzzerLoop(now, state);
     inductionLoop(now, state);
     motorLoop(now); // mutates state when spindown time
