@@ -74,6 +74,15 @@ typedef enum {
 
 state_t state = STATE_UNKNOWN;
 
+
+struct o2_state_t {
+  uint16_t conc_raw;
+  float concentration;
+  bool valid = false;
+  uint16_t errors = 0;
+  uint64_t last_data = 0;
+} o2_state;
+
 bool buzzing = false;
 void buzz(int freq = 0) {
   if (freq > 0) {
@@ -116,6 +125,9 @@ void buzzerLoop(uint64_t now, state_t s) {
 }
 
 String lastText = "";
+float lastConc = 0;
+bool lastValid = false;
+int lastErrs = 0;
 void showState(state_t s) {
   int16_t now2s = millis() % 2000;
   bool s1 = now2s < 1000;
@@ -175,7 +187,15 @@ void showState(state_t s) {
       break;
   }
 
-  if (text != lastText) {
+  bool o2_late = (o2_state.last_data < millis() - 2000);
+
+  if (text != lastText 
+      || o2_state.concentration != lastConc 
+      || o2_state.valid != lastValid 
+      || o2_state.errors != lastErrs
+      || o2_late
+    ) {
+    // State Text
     tft.setTextWrap(true);
     tft.setCursor(0, 0);
     tft.setTextColor(color);
@@ -184,6 +204,26 @@ void showState(state_t s) {
     tft.fillScreen(bgcolor);
     tft.drawString(text,  tft.width()/2, tft.height()/2);
     lastText = text;
+
+    // O2 State
+    char buf[64];
+    sprintf(buf, "O2 %.1f", o2_state.concentration);
+    text = buf;
+    text += "%";
+    if (!o2_state.valid) {
+     sprintf(buf, " CKERR %d", o2_state.errors);
+     text += buf;
+     tft.setTextColor(TFT_RED);
+    } else if (o2_late) {
+     sprintf(buf, " ENORX %d", (millis() - o2_state.last_data)/1000);
+     text += buf;
+     tft.setTextColor(TFT_RED);
+    }
+    tft.setTextSize(2);
+    tft.drawString(text, tft.width()/2, tft.height()*7/8);
+    lastConc = o2_state.concentration;
+    lastValid = o2_state.valid;
+    lastErrs = o2_state.errors;
   }
 }
 
@@ -276,6 +316,10 @@ void setup()
     Serial.begin(115200);
     Serial.println("Start");
 
+    o2_state.concentration = 0;
+    o2_state.errors = 0;
+    o2_state.valid = false;
+
     // Grove O2 sensor serial
     Serial2.begin(9600, SERIAL_8N1, O2_RX, O2_TX);
 
@@ -316,7 +360,7 @@ void setup()
     tft.setTextColor(TFT_WHITE);
     tft.setTextSize(4);
     tft.drawString("Spincaster",  tft.width()/2, tft.height()*1/4);
-    tft.drawString("V1.0", tft.width()/2, tft.height()/2);
+    tft.drawString("v1.1", tft.width()/2, tft.height()/2);
     tft.setTextSize(2);
     tft.drawString("\"Literally ",  tft.width()/2, tft.height()*3/4);
     tft.drawString(" Revolutionary\"",  tft.width()/2, tft.height()*7/8);
@@ -380,12 +424,6 @@ void motorLoop(uint64_t now) {
 #define O2_CMD_READ 0x86
 uint8_t o2idx = O2_PACKET_LEN;
 uint8_t o2buf[16];
-struct o2_state_t {
-  uint16_t conc_raw;
-  float concentration;
-  bool valid = false;
-  uint16_t errors = 0;
-} o2_state;
 void sensorLoop() {
   while (Serial2.available()) {
     uint8_t c = Serial2.read();
@@ -393,8 +431,8 @@ void sensorLoop() {
       o2idx = (c == O2_BEGIN) ? 0 : O2_PACKET_LEN;
     }
     char hbuf[3];
-    sprintf(hbuf, "%d %02x", o2idx, c);
-    Serial.println(hbuf);
+    //sprintf(hbuf, "%d %02x", o2idx, c);
+    //Serial.println(hbuf);
     o2buf[o2idx++] = c;
     if (o2idx == O2_PACKET_LEN) {
       // https://files.seeedstudio.com/wiki/Grove_Oxygen_Sensor_Pro/res/GGC2330-O2-1.0.pdf
@@ -407,7 +445,7 @@ void sensorLoop() {
         Serial.println(o2buf[1]);
         continue;
       }
-      o2_state.conc_raw = (o2buf[6] << 8) + o2buf[7];
+      o2_state.conc_raw = (o2buf[2] << 8) + o2buf[3];
       
       uint8_t checksum = 0;
       for (uint8_t i = 1; i < 8; i++) {
@@ -423,7 +461,8 @@ void sensorLoop() {
       } else {
         o2_state.concentration = float(o2_state.conc_raw) * 0.1;
         o2_state.valid = true;
-        sprintf(buf, "O2 %02f%", o2_state.concentration, o2_state.valid, o2_state.errors);
+        sprintf(buf, "O2 %.1f %s E%d", o2_state.concentration, o2_state.valid ? "valid" : "invalid", o2_state.errors);
+        o2_state.last_data = millis();
       }
       Serial.println(buf);
     }
